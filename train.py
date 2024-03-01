@@ -18,13 +18,13 @@ from torch.distributed import get_rank, init_process_group, destroy_process_grou
 def train(params:argparse.Namespace):
     assert params.genbatch % (torch.cuda.device_count() * params.clsnum) == 0 , 'please re-set your genbatch!!!'
     # initialize settings
-    init_process_group(backend="nccl")
+    # init_process_group(backend="nccl")
     # get local rank for each process
-    local_rank = get_rank()
+    # local_rank = get_rank()
     # set device
-    device = torch.device("cuda", local_rank)
+    device = torch.device("cuda")
     # load data
-    dataloader, sampler = load_data(params.batchsize, params.numworkers)
+    dataloader = load_data(params.batchsize, params.numworkers)
     # initialize models
     net = Unet(
                 in_ch = params.inch,
@@ -59,16 +59,16 @@ def train(params:argparse.Namespace):
                 )
     
     # DDP settings 
-    diffusion.model = DDP(
-                            diffusion.model,
-                            device_ids = [local_rank],
-                            output_device = local_rank
-                        )
-    cemblayer = DDP(
-                    cemblayer,
-                    device_ids = [local_rank],
-                    output_device = local_rank
-                )
+    # diffusion.model = DDP(
+    #                         diffusion.model,
+    #                         device_ids = [local_rank],
+    #                         output_device = local_rank
+    #                     )
+    # cemblayer = DDP(
+    #                 cemblayer,
+    #                 device_ids = [local_rank],
+    #                 output_device = local_rank
+    #             )
     # optimizer settings
     optimizer = torch.optim.AdamW(
                     itertools.chain(
@@ -101,9 +101,9 @@ def train(params:argparse.Namespace):
         # turn into train mode
         diffusion.model.train()
         cemblayer.train()
-        sampler.set_epoch(epc)
+        # sampler.set_epoch(epc)
         # batch iterations
-        with tqdm(dataloader, dynamic_ncols=True, disable=(local_rank % cnt != 0)) as tqdmDataLoader:
+        with tqdm(dataloader, dynamic_ncols=True) as tqdmDataLoader:
             for img, lab in tqdmDataLoader:
                 b = img.shape[0]
                 optimizer.zero_grad()
@@ -146,16 +146,14 @@ def train(params:argparse.Namespace):
                     generated = diffusion.sample(genshape, cemb = cemb)
                 img = transback(generated)
                 img = img.reshape(params.clsnum, each_device_batch // params.clsnum, 3, 32, 32).contiguous()
-                gathered_samples = [torch.zeros_like(img) for _ in range(get_world_size())]
-                all_gather(gathered_samples, img)
-                all_samples.extend([img for img in gathered_samples])
+                all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
                 samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch, 3, 32, 32)
-                if local_rank == 0:
-                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch // params.clsnum)
+                # if local_rank == 0:
+                save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch // params.clsnum)
             # save checkpoints
             checkpoint = {
-                                'net':diffusion.model.module.state_dict(),
-                                'cemblayer':cemblayer.module.state_dict(),
+                                'net':diffusion.model.state_dict(),
+                                'cemblayer':cemblayer.state_dict(),
                                 'optimizer':optimizer.state_dict(),
                                 'scheduler':warmUpScheduler.state_dict()
                             }
@@ -186,7 +184,7 @@ def main():
     parser.add_argument('--epoch',type=int,default=1500,help='epochs for training')
     parser.add_argument('--multiplier',type=float,default=2.5,help='multiplier for warmup')
     parser.add_argument('--threshold',type=float,default=0.1,help='threshold for classifier-free guidance')
-    parser.add_argument('--interval',type=int,default=20,help='epoch interval between two evaluations')
+    parser.add_argument('--interval',type=int,default=10,help='epoch interval between two evaluations')
     parser.add_argument('--moddir',type=str,default='model',help='model addresses')
     parser.add_argument('--samdir',type=str,default='sample',help='sample addresses')
     parser.add_argument('--genbatch',type=int,default=80,help='batch size for sampling process')
@@ -202,3 +200,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

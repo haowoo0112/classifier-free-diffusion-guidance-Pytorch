@@ -11,7 +11,7 @@ class GaussianDiffusion(nn.Module):
         self.dtype = dtype
         self.model = model.to(device)
         self.model.dtype = self.dtype
-        self.betas = torch.tensor(betas,dtype=self.dtype)
+        self.betas = torch.tensor(betas,dtype=self.dtype).to(device)
         self.w = w
         self.v = v
         self.T = len(betas)
@@ -35,10 +35,10 @@ class GaussianDiffusion(nn.Module):
 
         # calculate parameters for q(x_t|x_0)
         self.log_sqrt_alphas_bar = 0.5 * self.log_alphas_bar
-        self.sqrt_alphas_bar = torch.exp(self.log_sqrt_alphas_bar)
+        self.sqrt_alphas_bar = torch.exp(self.log_sqrt_alphas_bar).to(device)
         # self.sqrt_alphas_bar = torch.sqrt(self.alphas_bar)
         self.log_one_minus_alphas_bar = torch.log(1.0 - self.alphas_bar)
-        self.sqrt_one_minus_alphas_bar = torch.exp(0.5 * self.log_one_minus_alphas_bar)
+        self.sqrt_one_minus_alphas_bar = torch.exp(0.5 * self.log_one_minus_alphas_bar).to(device)
         
         # calculate parameters for q(x_{t-1}|x_t,x_0)
         # log calculation clipped because the \tilde{\beta} = 0 at the beginning
@@ -153,20 +153,20 @@ class GaussianDiffusion(nn.Module):
         """
         sample images from p_{theta}
         """
-        local_rank = get_rank()
-        if local_rank == 0:
-            print('Start generating...')
+#        local_rank = get_rank()
+#        if local_rank == 0:
+#            print('Start generating...')
         if model_kwargs == None:
             model_kwargs = {}
         x_t = torch.randn(shape, device = self.device)
         tlist = torch.ones([x_t.shape[0]], device = self.device) * self.T
-        for _ in tqdm(range(self.T),dynamic_ncols=True, disable=(local_rank % torch.cuda.device_count() != 0)):
+        for _ in tqdm(range(self.T),dynamic_ncols=True):
             tlist -= 1
             with torch.no_grad():
                 x_t = self.p_sample(x_t, tlist, **model_kwargs)
         x_t = torch.clamp(x_t, -1, 1)
-        if local_rank == 0:
-            print('ending sampling process...')
+#        if local_rank == 0:
+#            print('ending sampling process...')
         return x_t
     
     def ddim_p_mean_variance(self, x_t:torch.Tensor, t:torch.Tensor, prevt:torch.Tensor, eta:float, **model_kwargs) -> torch.Tensor:
@@ -254,3 +254,4 @@ class GaussianDiffusion(nn.Module):
         loss = F.mse_loss(pred_eps, eps, reduction='mean')
         return loss
     
+
