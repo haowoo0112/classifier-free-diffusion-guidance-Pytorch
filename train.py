@@ -8,15 +8,17 @@ from tqdm import tqdm
 import torch.optim as optim
 from diffusion import GaussianDiffusion
 from torchvision.utils import save_image
+from torch.utils.data import Dataset, DataLoader
 from utils import get_named_beta_schedule
 from embedding import ConditionalEmbedding
 from Scheduler import GradualWarmupScheduler
 from dataloader_cifar import load_data, transback
+from dataloader_cityscapes import CustomDataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import get_rank, init_process_group, destroy_process_group, all_gather, get_world_size
 
 def train(params:argparse.Namespace):
-    assert params.genbatch % (torch.cuda.device_count() * params.clsnum) == 0 , 'please re-set your genbatch!!!'
+    # assert params.genbatch % (torch.cuda.device_count() * params.clsnum) == 0 , 'please re-set your genbatch!!!'
     # initialize settings
     # init_process_group(backend="nccl")
     # get local rank for each process
@@ -24,7 +26,11 @@ def train(params:argparse.Namespace):
     # set device
     device = torch.device("cuda")
     # load data
-    dataloader = load_data(params.batchsize, params.numworkers)
+    # dataloader = load_data(params.batchsize, params.numworkers)
+    train_dataset = CustomDataset('cityscapes/train')
+    train_dataloader = DataLoader(train_dataset, batch_size=params.batchsize, shuffle=True)
+    valid_dataset = CustomDataset('cityscapes/val')
+    valid_dataloader = DataLoader(valid_dataset, batch_size=params.batchsize, shuffle=True)
     # initialize models
     net = Unet(
                 in_ch = params.inch,
@@ -37,7 +43,7 @@ def train(params:argparse.Namespace):
                 droprate = params.droprate,
                 dtype = params.dtype
             )
-    cemblayer = ConditionalEmbedding(10, params.cdim, params.cdim).to(device)
+    cemblayer = ConditionalEmbedding(params.inch).to(device)
     # load last epoch
     lastpath = os.path.join(params.moddir,'last_epoch.pt')
     if os.path.exists(lastpath):
@@ -57,19 +63,6 @@ def train(params:argparse.Namespace):
                     v = params.v,
                     device = device
                 )
-    
-    # DDP settings 
-    # diffusion.model = DDP(
-    #                         diffusion.model,
-    #                         device_ids = [local_rank],
-    #                         output_device = local_rank
-    #                     )
-    # cemblayer = DDP(
-    #                 cemblayer,
-    #                 device_ids = [local_rank],
-    #                 output_device = local_rank
-    #             )
-    # optimizer settings
     optimizer = torch.optim.AdamW(
                     itertools.chain(
                         diffusion.model.parameters(),
@@ -103,14 +96,14 @@ def train(params:argparse.Namespace):
         cemblayer.train()
         # sampler.set_epoch(epc)
         # batch iterations
-        with tqdm(dataloader, dynamic_ncols=True) as tqdmDataLoader:
-            for img, lab in tqdmDataLoader:
+        with tqdm(train_dataloader, dynamic_ncols=True) as tqdmDataLoader:
+            for lab, image in tqdmDataLoader:
                 b = img.shape[0]
                 optimizer.zero_grad()
                 x_0 = img.to(device)
                 lab = lab.to(device)
                 cemb = cemblayer(lab)
-                cemb[np.where(np.random.rand(b)<params.threshold)] = 0
+                # cemb[np.where(np.random.rand(b)<params.threshold)] = 0
                 loss = diffusion.trainloss(x_0, cemb = cemb)
                 loss.backward()
                 optimizer.step()
@@ -134,22 +127,26 @@ def train(params:argparse.Namespace):
             all_samples = []
             each_device_batch = params.genbatch // cnt
             with torch.no_grad():
-                lab = torch.ones(params.clsnum, each_device_batch // params.clsnum).type(torch.long) \
-                * torch.arange(start = 0, end = params.clsnum).reshape(-1, 1)
-                lab = lab.reshape(-1, 1).squeeze()
-                lab = lab.to(device)
-                cemb = cemblayer(lab)
-                genshape = (each_device_batch , 3, 32, 32)
-                if params.ddim:
-                    generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
-                else:
-                    generated = diffusion.sample(genshape, cemb = cemb)
-                img = transback(generated)
-                img = img.reshape(params.clsnum, each_device_batch // params.clsnum, 3, 32, 32).contiguous()
-                all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
-                samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch, 3, 32, 32)
-                # if local_rank == 0:
-                save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch // params.clsnum)
+                for lab, image in valid_dataloader:
+                    image = image.to(device)
+                    image = transback(image)
+                    lab = lab.to(device)
+                    cemb = cemblayer(lab)
+                    genshape = (each_device_batch , 3, 256 // 4, 256 // 4)
+                    if params.ddim:
+                        generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
+                    else:
+                        generated = diffusion.sample(genshape, cemb = cemb)
+                    img = transback(generated)
+                    # print(img.shape)
+                    img = torch.concat((image, img), dim = 0)
+                    img = img.reshape(4, 2, 3, 256 // 4, 256 // 4).contiguous()
+                    
+                    all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
+                    samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 256 // 4, 256 // 4)
+                    # if local_rank == 0:
+                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = 4)
+                    break
             # save checkpoints
             checkpoint = {
                                 'net':diffusion.model.state_dict(),
@@ -166,7 +163,7 @@ def main():
     # several hyperparameters for model
     parser = argparse.ArgumentParser(description='test for diffusion model')
 
-    parser.add_argument('--batchsize',type=int,default=256,help='batch size per device for training Unet model')
+    parser.add_argument('--batchsize',type=int,default=4,help='batch size per device for training Unet model')
     parser.add_argument('--numworkers',type=int,default=4,help='num workers for training Unet model')
     parser.add_argument('--inch',type=int,default=3,help='input channels for Unet model')
     parser.add_argument('--modch',type=int,default=64,help='model channels for Unet model')
@@ -184,10 +181,10 @@ def main():
     parser.add_argument('--epoch',type=int,default=1500,help='epochs for training')
     parser.add_argument('--multiplier',type=float,default=2.5,help='multiplier for warmup')
     parser.add_argument('--threshold',type=float,default=0.1,help='threshold for classifier-free guidance')
-    parser.add_argument('--interval',type=int,default=10,help='epoch interval between two evaluations')
+    parser.add_argument('--interval',type=int,default=1,help='epoch interval between two evaluations')
     parser.add_argument('--moddir',type=str,default='model',help='model addresses')
     parser.add_argument('--samdir',type=str,default='sample',help='sample addresses')
-    parser.add_argument('--genbatch',type=int,default=80,help='batch size for sampling process')
+    parser.add_argument('--genbatch',type=int,default=4,help='batch size for sampling process')
     parser.add_argument('--clsnum',type=int,default=10,help='num of label classes')
     parser.add_argument('--num_steps',type=int,default=50,help='sampling steps for DDIM')
     parser.add_argument('--eta',type=float,default=0,help='eta for variance during DDIM sampling process')

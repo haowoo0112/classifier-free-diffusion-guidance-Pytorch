@@ -24,7 +24,17 @@ def timestep_embedding(timesteps:torch.Tensor, dim:int, max_period=10000) -> tor
         embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     return embedding
 
-class Upsample(nn.Module):
+class updownBlock(nn.Module):
+    """
+    abstract class
+    """
+    @abstractmethod
+    def forward(self, x, cemb):
+        """
+        abstract method
+        """
+
+class Upsample(updownBlock):
     """
     an upsampling layer
     """
@@ -33,13 +43,15 @@ class Upsample(nn.Module):
         self.in_ch = in_ch
         self.out_ch = out_ch
         self.layer = nn.Conv2d(in_ch, out_ch, kernel_size = 3, stride = 1, padding = 1)
-    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        self.layer_cond = nn.Conv2d(in_ch, out_ch, kernel_size = 3, stride = 1, padding = 1)
+    def forward(self, x:torch.Tensor, c:torch.Tensor):
         assert x.shape[1] == self.in_ch, f'x and upsampling layer({self.in_ch}->{self.out_ch}) doesn\'t match.'
         x = F.interpolate(x, scale_factor = 2, mode = "nearest")
+        c = F.interpolate(c, scale_factor = 2, mode = "nearest")
         output = self.layer(x)
-        return output
+        return output, self.layer_cond(c)
 
-class Downsample(nn.Module):
+class Downsample(updownBlock):
     """
     a downsampling layer
     """
@@ -49,11 +61,12 @@ class Downsample(nn.Module):
         self.out_ch = out_ch
         if use_conv:
             self.layer = nn.Conv2d(self.in_ch, self.out_ch, kernel_size = 3, stride = 2, padding = 1)
+            self.layer_cond = nn.Conv2d(self.in_ch, self.out_ch, kernel_size = 3, stride = 2, padding = 1)
         else:
             self.layer = nn.AvgPool2d(kernel_size = 2, stride = 2)
-    def forward(self, x:torch.Tensor) -> torch.Tensor:
+    def forward(self, x:torch.Tensor, c:torch.Tensor):
         assert x.shape[1] == self.in_ch, f'x and upsampling layer({self.in_ch}->{self.out_ch}) doesn\'t match.'
-        return self.layer(x)
+        return self.layer(x), self.layer_cond(c)
 
 class EmbedBlock(nn.Module):
     """
@@ -64,14 +77,17 @@ class EmbedBlock(nn.Module):
         """
         abstract method
         """
+
 class EmbedSequential(nn.Sequential, EmbedBlock):
     def forward(self, x:torch.Tensor, temb:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         for layer in self:
             if isinstance(layer, EmbedBlock):
-                x = layer(x, temb, cemb)
+                x, cemb = layer(x, temb, cemb)
+            elif isinstance(layer, updownBlock):
+                x, cemb = layer(x, cemb)
             else:
                 x = layer(x)
-        return x
+        return x, cemb
 class ResBlock(EmbedBlock):
     def __init__(self, in_ch:torch.Tensor, out_ch:torch.Tensor, tdim:int, cdim:int, droprate:float):
         super().__init__()
@@ -93,7 +109,7 @@ class ResBlock(EmbedBlock):
         )
         self.cemb_proj = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(cdim, out_ch),
+            nn.Conv2d(in_ch, out_ch, kernel_size = 3, padding = 1),
         )
         
         self.block_2 = nn.Sequential(
@@ -110,11 +126,15 @@ class ResBlock(EmbedBlock):
     def forward(self, x:torch.Tensor, temb:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         latent = self.block_1(x)
         latent += self.temb_proj(temb)[:, :, None, None]
-        latent += self.cemb_proj(cemb)[:, :, None, None]
+        # print(latent.shape)
+        # print(cemb.shape)
+        c_proj = self.cemb_proj(cemb)
+        # print(c_proj.shape)
+        latent += c_proj
         latent = self.block_2(latent)
 
         latent += self.residual(x)
-        return latent
+        return latent, c_proj
         
 class AttnBlock(nn.Module):
     def __init__(self, in_ch:int):
@@ -191,9 +211,8 @@ class Unet(nn.Module):
             nn.Linear(tdim, tdim),
         )
         self.cemb_layer = nn.Sequential(
-            nn.Linear(self.cdim, tdim),
+            nn.Conv2d(in_ch, mod_ch, kernel_size=1, bias=False),
             nn.SiLU(),
-            nn.Linear(tdim, tdim),
         )
         self.downblocks = nn.ModuleList([
             EmbedSequential(nn.Conv2d(in_ch, self.mod_ch, 3, padding=1))
@@ -239,13 +258,18 @@ class Unet(nn.Module):
         temb = self.temb_layer(timestep_embedding(t, self.mod_ch))
         cemb = self.cemb_layer(cemb)
         hs = []
+        cs = []
         h = x.type(self.dtype)
         for block in self.downblocks:
-            h = block(h, temb, cemb)
+            # print(h.shape, "---------")
+            h, cemb = block(h, temb, cemb)
             hs.append(h)
-        h = self.middleblocks(h, temb, cemb)
+            cs.append(cemb)
+        h, cemb = self.middleblocks(h, temb, cemb)
+        # print("middle")
         for block in self.upblocks:
             h = torch.cat([h, hs.pop()], dim = 1)
-            h = block(h, temb, cemb)
+            cemb = torch.cat([cemb, cs.pop()], dim = 1)
+            h, cemb = block(h, temb, cemb)
         h = h.type(self.dtype)
         return self.out(h)
