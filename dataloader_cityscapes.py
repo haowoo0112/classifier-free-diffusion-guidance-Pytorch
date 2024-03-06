@@ -24,15 +24,15 @@ class CustomDataset(Dataset):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.folder_path, self.image_files[idx])
+        img_name = os.path.join(self.folder_path, "images", self.image_files[idx])
         img = Image.open(img_name)
-        label_name = os.path.join(self.folder_path, self.label_files[idx])
+        label_name = os.path.join(self.folder_path, "labels", self.label_files[idx])
         label = Image.open(label_name)
 
-        img = self.transform(img)
-        label = self.transform(label)
+        img = self.transform_image(img)
+        label = self.transform_label(label)
         # 可以進行進一步的前處理，例如轉換成 NumPy 數組，正規化等
-
+        print(label.shape)
         return label, img
 
 def showImage():

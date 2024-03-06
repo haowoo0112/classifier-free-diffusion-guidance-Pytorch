@@ -211,7 +211,7 @@ class Unet(nn.Module):
             nn.Linear(tdim, tdim),
         )
         self.cemb_layer = nn.Sequential(
-            nn.Conv2d(in_ch, mod_ch, kernel_size=1, bias=False),
+            nn.Conv2d(1, mod_ch, kernel_size=1, bias=False),
             nn.SiLU(),
         )
         self.downblocks = nn.ModuleList([

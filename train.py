@@ -45,7 +45,7 @@ def train(params:argparse.Namespace):
             )
     total_params = sum(p.numel() for p in net.parameters())
     print(f"模型参数量为：{total_params}")
-    cemblayer = ConditionalEmbedding(params.inch).to(device)
+    cemblayer = ConditionalEmbedding(1).to(device)
     total_params = sum(p.numel() for p in cemblayer.parameters())
     print(f"模型参数量为：{total_params}")
     # load last epoch
