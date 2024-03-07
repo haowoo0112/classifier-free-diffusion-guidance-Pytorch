@@ -8,32 +8,28 @@ import numpy as np
 class CustomDataset(Dataset):
     def __init__(self, folder_path):
         self.folder_path = folder_path
-        self.image_files = os.listdir(os.path.join(folder_path, "images"))
-        self.label_files = os.listdir(os.path.join(folder_path, "labels"))
-        self.transform_image = transforms.Compose([
+        self.image_files = os.listdir(folder_path)
+        self.transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Resize([128, 64]),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-        ])
-        self.transform_label = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize([128, 64]),
         ])
 
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.folder_path, "images", self.image_files[idx])
+        img_name = os.path.join(self.folder_path, self.image_files[idx])
         img = Image.open(img_name)
-        label_name = os.path.join(self.folder_path, "labels", self.label_files[idx])
-        label = Image.open(label_name)
-
-        img = self.transform_image(img)
-        label = self.transform_label(label)
+        img = img.resize((img.size[0] // 4, img.size[1] // 4))
+        # 分割圖像，假設右邊是input，左邊是output
+        width, height = img.size
+        output_img = img.crop((0, 0, width // 2, height))
+        input_img = img.crop((width // 2, 0, width, height))
+        input_tensor = self.transform(input_img)
+        output_tensor = self.transform(output_img)
         # 可以進行進一步的前處理，例如轉換成 NumPy 數組，正規化等
-        print(label.shape)
-        return label, img
+
+        return input_tensor, output_tensor
 
 def showImage():
     # 資料夾路徑，根據實際情況修改
