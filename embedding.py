@@ -5,7 +5,7 @@ class ConditionalEmbedding(nn.Module):
     def __init__(self, dim:int):
         super().__init__()
         self.condEmbedding = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size=1, bias=False),
+            nn.Conv2d(dim, 3, kernel_size=1, bias=False),
             nn.SiLU(),
         )
 
