@@ -45,7 +45,7 @@ def train(params:argparse.Namespace):
             )
     total_params = sum(p.numel() for p in net.parameters())
     print(f"模型参数量为：{total_params}")
-    cemblayer = ConditionalEmbedding(params.inch).to(device)
+    cemblayer = ConditionalEmbedding(1).to(device)
     total_params = sum(p.numel() for p in cemblayer.parameters())
     print(f"模型参数量为：{total_params}")
     # load last epoch
@@ -114,7 +114,7 @@ def train(params:argparse.Namespace):
         # sampler.set_epoch(epc)
         # batch iterations
         with tqdm(train_dataloader, dynamic_ncols=True) as tqdmDataLoader:
-            for img, lab in tqdmDataLoader:
+            for lab, img in tqdmDataLoader:
                 b = img.shape[0]
                 optimizer.zero_grad()
                 x_0 = img.to(device)
@@ -144,12 +144,12 @@ def train(params:argparse.Namespace):
             all_samples = []
             each_device_batch = params.genbatch // cnt
             with torch.no_grad():
-                for image, lab in valid_dataloader:
+                for lab, image in valid_dataloader:
                     image = image.to(device)
                     image = transback(image)
                     lab = lab.to(device)
                     cemb = cemblayer(lab)
-                    genshape = (each_device_batch , 3, 64, 64)
+                    genshape = (each_device_batch , 3, 128, 64)
                     if params.ddim:
                         generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
                     else:
@@ -157,12 +157,12 @@ def train(params:argparse.Namespace):
                     img = transback(generated)
                     # print(img.shape)
                     img = torch.concat((image, img), dim = 0)
-                    img = img.reshape(params.genbatch, 2, 3, 64, 64).contiguous()
+                    img = img.reshape(8, 2, 3, 128, 64).contiguous()
                     
                     all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
-                    samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 64, 64)
+                    samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 128, 64)
                     # if local_rank == 0:
-                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch)
+                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = 4)
                     break
             # save checkpoints
             checkpoint = {
@@ -180,7 +180,7 @@ def main():
     # several hyperparameters for model
     parser = argparse.ArgumentParser(description='test for diffusion model')
 
-    parser.add_argument('--batchsize',type=int,default=4,help='batch size per device for training Unet model')
+    parser.add_argument('--batchsize',type=int,default=8,help='batch size per device for training Unet model')
     parser.add_argument('--numworkers',type=int,default=4,help='num workers for training Unet model')
     parser.add_argument('--inch',type=int,default=3,help='input channels for Unet model')
     parser.add_argument('--modch',type=int,default=64,help='model channels for Unet model')
@@ -198,10 +198,10 @@ def main():
     parser.add_argument('--epoch',type=int,default=1500,help='epochs for training')
     parser.add_argument('--multiplier',type=float,default=2.5,help='multiplier for warmup')
     parser.add_argument('--threshold',type=float,default=0.1,help='threshold for classifier-free guidance')
-    parser.add_argument('--interval',type=int,default=1,help='epoch interval between two evaluations')
+    parser.add_argument('--interval',type=int,default=10,help='epoch interval between two evaluations')
     parser.add_argument('--moddir',type=str,default='model',help='model addresses')
     parser.add_argument('--samdir',type=str,default='sample',help='sample addresses')
-    parser.add_argument('--genbatch',type=int,default=4,help='batch size for sampling process')
+    parser.add_argument('--genbatch',type=int,default=8,help='batch size for sampling process')
     parser.add_argument('--clsnum',type=int,default=10,help='num of label classes')
     parser.add_argument('--num_steps',type=int,default=50,help='sampling steps for DDIM')
     parser.add_argument('--eta',type=float,default=0,help='eta for variance during DDIM sampling process')
