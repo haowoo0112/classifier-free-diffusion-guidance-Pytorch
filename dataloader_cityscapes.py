@@ -4,6 +4,7 @@ from torchvision import transforms
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 class CustomDataset(Dataset):
     def __init__(self, folder_path):
@@ -32,6 +33,7 @@ class CustomDataset(Dataset):
         img = self.transform_image(img)
         label = self.transform_label(label)
         # 可以進行進一步的前處理，例如轉換成 NumPy 數組，正規化等
+        label = (label * 255).to(torch.int64)
         return label, img
 
 def showImage():

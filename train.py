@@ -27,9 +27,9 @@ def train(params:argparse.Namespace):
     device = torch.device("cuda")
     # load data
     # dataloader = load_data(params.batchsize, params.numworkers)
-    train_dataset = CustomDataset('cityscapes/train')
+    train_dataset = CustomDataset('cityscapes_ori/train')
     train_dataloader = DataLoader(train_dataset, batch_size=params.batchsize, shuffle=True)
-    valid_dataset = CustomDataset('cityscapes/val')
+    valid_dataset = CustomDataset('cityscapes_ori/val')
     valid_dataloader = DataLoader(valid_dataset, batch_size=params.batchsize, shuffle=False)
     # initialize models
     net = Unet(
@@ -45,7 +45,7 @@ def train(params:argparse.Namespace):
             )
     total_params = sum(p.numel() for p in net.parameters())
     print(f"模型参数量为：{total_params}")
-    cemblayer = ConditionalEmbedding(1).to(device)
+    cemblayer = ConditionalEmbedding(34).to(device)
     total_params = sum(p.numel() for p in cemblayer.parameters())
     print(f"模型参数量为：{total_params}")
     # load last epoch
@@ -119,7 +119,9 @@ def train(params:argparse.Namespace):
                 optimizer.zero_grad()
                 x_0 = img.to(device)
                 lab = lab.to(device)
-                cemb = cemblayer(lab)
+                input_label = torch.zeros(b, 34, 64, 64, dtype=torch.float32, device='cuda')
+                input_semantics = input_label.scatter_(1, lab, 1.0)
+                cemb = cemblayer(input_semantics)
                 # cemb[np.where(np.random.rand(b)<params.threshold)] = 0
                 loss = diffusion.trainloss(x_0, cemb = cemb)
                 loss.backward()
@@ -148,7 +150,9 @@ def train(params:argparse.Namespace):
                     image = image.to(device)
                     image = transback(image)
                     lab = lab.to(device)
-                    cemb = cemblayer(lab)
+                    input_label = torch.zeros(b, 34, 64, 64, dtype=torch.float32, device='cuda')
+                    input_semantics = input_label.scatter_(1, lab, 1.0)
+                    cemb = cemblayer(input_semantics)
                     genshape = (each_device_batch , 3, 128, 64)
                     if params.ddim:
                         generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
@@ -157,10 +161,10 @@ def train(params:argparse.Namespace):
                     img = transback(generated)
                     # print(img.shape)
                     img = torch.concat((image, img), dim = 0)
-                    img = img.reshape(params.genbatch, 2, 3, 128, 64).contiguous()
+                    img = img.reshape(params.genbatch, 2, 3, 64, 64).contiguous()
                     
                     all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
-                    samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 128, 64)
+                    samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 64, 64)
                     # if local_rank == 0:
                     save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch)
                     break
