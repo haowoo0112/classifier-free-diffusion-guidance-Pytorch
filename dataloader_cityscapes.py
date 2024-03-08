@@ -12,12 +12,12 @@ class CustomDataset(Dataset):
         self.label_files = os.listdir(os.path.join(folder_path, "labels"))
         self.transform_image = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Resize([128, 64]),
+            transforms.Resize([64, 64]),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
         self.transform_label = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Resize([128, 64]),
+            transforms.Resize([64, 64]),
         ])
 
     def __len__(self):
@@ -32,7 +32,6 @@ class CustomDataset(Dataset):
         img = self.transform_image(img)
         label = self.transform_label(label)
         # 可以進行進一步的前處理，例如轉換成 NumPy 數組，正規化等
-        print(label.shape)
         return label, img
 
 def showImage():

@@ -157,12 +157,12 @@ def train(params:argparse.Namespace):
                     img = transback(generated)
                     # print(img.shape)
                     img = torch.concat((image, img), dim = 0)
-                    img = img.reshape(8, 2, 3, 128, 64).contiguous()
+                    img = img.reshape(params.genbatch, 2, 3, 128, 64).contiguous()
                     
                     all_samples = [img.clone() for _ in range(torch.cuda.device_count())]
                     samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * 2, 3, 128, 64)
                     # if local_rank == 0:
-                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = 4)
+                    save_image(samples, os.path.join(params.samdir, f'generated_{epc+1}_pict.png'), nrow = params.genbatch)
                     break
             # save checkpoints
             checkpoint = {
